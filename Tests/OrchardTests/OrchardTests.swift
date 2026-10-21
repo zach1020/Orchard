@@ -77,3 +77,116 @@ func liveModelUsesCalculator() async throws {
   #expect(try await declined.call(arguments: .init(json: "{}")).contains("declined"))
   await client.disconnect()
 }
+
+@Test func searchIntentNeverEnablesCalculator() {
+  for prompt in [
+    "Search RuneScape online", "Do a search for RuneScape with Brave",
+    "Can you search the web for RuneScape?", "Look up RuneScape", "Search for 137 times 29 online",
+  ] {
+    #expect(RequestRouting.wantsWebSearch(prompt))
+    #expect(!RequestRouting.allowsCalculator(prompt))
+  }
+  #expect(!RequestRouting.wantsWebSearch("Explain binary search"))
+  #expect(!RequestRouting.allowsCalculator("Add a reminder for tomorrow"))
+  #expect(RequestRouting.allowsCalculator("What is two plus two?"))
+  #expect(RequestRouting.allowsCalculator("Multiply 137 by 29"))
+}
+
+@MainActor @Test func disabledSearchExplainsInsteadOfCallingTools() {
+  let defaults = UserDefaults(suiteName: "OrchardTests.\(UUID())")!
+  let model = ChatModel(loadCredentials: false, preferences: defaults)
+  model.available = true
+  model.searchKey = "test-key-never-sent"
+  model.input = "Do a search for RuneScape with Brave"
+  model.send()
+  #expect(model.messages.last?.text.contains("Web search is off") == true)
+  #expect(model.generation == nil)
+  #expect(!model.events.contains { $0.title == "Calculator" })
+  model.searchKey = ""
+  model.input = "Search RuneScape online"
+  model.send()
+  #expect(model.messages.last?.text.contains("isn’t configured") == true)
+}
+
+@MainActor @Test func calculatorDoesNotLeakIntoTheNextRequest() {
+  let model = ChatModel(
+    loadCredentials: false, preferences: UserDefaults(suiteName: "OrchardTests.\(UUID())")!)
+  #expect(
+    model.tools(for: "Multiply 137 by 29", budget: ToolBudget()).contains { $0.name == "calculate" }
+  )
+  #expect(
+    !model.tools(for: "Search RuneScape online", budget: ToolBudget()).contains {
+      $0.name == "calculate"
+    })
+  #expect(
+    !model.tools(for: "Tell me about RuneScape", budget: ToolBudget()).contains {
+      $0.name == "calculate"
+    })
+  model.searchKey = "test-key-never-sent"
+  model.searchEnabled = true
+  #expect(
+    model.tools(for: "Search RuneScape online", budget: ToolBudget()).map(\.name) == ["search_web"])
+}
+
+@Test func repeatedToolCallsStopBeforeExecutingAgain() async throws {
+  let recorder = Recorder()
+  let budget = ToolBudget()
+  let tool = CalculatorTool(budget: budget, log: { _, result in await recorder.add(result) })
+  for _ in 0..<4 { _ = try await tool.call(arguments: .init(operation: "add", a: 1, b: 2)) }
+  await #expect(throws: OrchardError.self) {
+    try await tool.call(arguments: .init(operation: "add", a: 1, b: 2))
+  }
+  #expect(await recorder.count == 4)
+}
+
+@MainActor @Test(.enabled(if: ProcessInfo.processInfo.environment["ORCHARD_LIVE_TEST"] == "1"))
+func liveSearchRouteUsesSearchEvidenceWithoutCalculator() async throws {
+  let recorder = Recorder()
+  let model = ChatModel(
+    loadCredentials: false, preferences: UserDefaults(suiteName: "OrchardTests.\(UUID())")!,
+    search: { query, _ in
+      await recorder.add(query)
+      return [
+        .init(
+          title: "RuneScape", url: "https://www.runescape.com/",
+          description: "RuneScape is a fantasy MMORPG. This is its official homepage.")
+      ]
+    })
+  model.searchKey = "fixture-no-network"
+  model.searchEnabled = true
+  model.input = "Do a search for RuneScape with Brave"
+  model.send()
+  await model.generation?.value
+  #expect(await recorder.count == 1)
+  #expect(await recorder.entries.first == "RuneScape")
+  #expect(model.sources.first?.url == "https://www.runescape.com/")
+  #expect(!model.events.contains { $0.title == "Calculator" })
+  #expect(model.error == nil)
+  #expect(model.messages.last?.text.lowercased().contains("runescape") == true)
+  print("LIVE SEARCH ROUTE (fixture results): \(model.messages.last?.text ?? "")")
+}
+
+@Test func webQueriesExcludeTheProviderAndCommands() {
+  #expect(RequestRouting.webQuery("Do a search for RuneScape with Brave") == "RuneScape")
+  #expect(RequestRouting.webQuery("Search RuneScape online") == "RuneScape")
+  #expect(
+    RequestRouting.webQuery("Can you search the web for RuneScape using Brave?") == "RuneScape")
+  #expect(
+    RequestRouting.webQuery("Search for Brave browser extensions") == "Brave browser extensions")
+}
+
+@MainActor @Test func retryPreservesTheDisabledSearchIntent() {
+  let model = ChatModel(
+    loadCredentials: false, preferences: UserDefaults(suiteName: "OrchardTests.\(UUID())")!)
+  model.available = true
+  model.searchKey = "test-key-never-sent"
+  model.input = "Do a search for RuneScape with Brave"
+  model.send()
+  model.input = "try again"
+  model.send()
+  #expect(model.messages.last?.text.contains("Web search is off") == true)
+  #expect(model.generation == nil)
+  #expect(model.lastSearchPrompt == "Do a search for RuneScape with Brave")
+  model.newChat()
+  #expect(model.lastSearchPrompt == nil)
+}

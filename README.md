@@ -13,7 +13,8 @@ Open `../Orchard.app`. Requires an Apple silicon Mac running macOS 26 or later w
 - Custom cyan-and-magenta glass leaf logo, integrated into the app and macOS icon. See [logo provenance and prompt](Assets/LOGO.md).
 - OLED-black appearance with native Liquid Glass panels, cyan and magenta accents, and high-contrast conversation text.
 - Streaming local chat with a stop button and explicit model-availability status.
-- A calculator tool with visible execution results.
+- A calculator tool exposed only for arithmetic requests, with visible execution results.
+- Explicit web-search routing: searches run before model summarization. Disabled or missing search is explained without calling unrelated tools. All model-driven tool use is capped at four calls per response.
 - Brave web search, with links in the Sources panel. Enter your own Brave Search API key in Settings, then turn on Web search. Keys are stored in macOS Keychain. Search queries go to Brave; local inference does not become a cloud-model request.
 - MCP connections through local stdio processes or HTTP endpoints (HTTPS, or localhost HTTP). Tool discovery and per-call approval. Optional HTTP bearer tokens stay in memory.
 - Activity panel with tool calls and returned text.
@@ -40,13 +41,13 @@ The live test asks the actual on-device model to invoke the calculator. Other te
 
 ## Prototype limits
 
-- Chats, MCP settings, and bearer tokens stay in memory and clear on quit. The Brave key persists in Keychain.
+- Chats, MCP settings, and bearer tokens stay in memory and clear on quit. The Brave key persists in Keychain and is loaded at launch. The web-search toggle also persists. Saving a new key enables search.
 - One connected MCP server and at most 12 discovered tools at a time. Complex schemas can exceed the local model's context budget.
 - MCP tools receive a JSON argument object generated from their advertised schema. Server-side validation remains necessary. Only text results are currently passed to the model.
 - OAuth, MCP resources/prompts, attachments, and persistent conversation history are not implemented.
-- Tool configuration changes start a fresh model session; the visible conversation remains on screen but is not replayed into the new session. Use New chat for a clean slate.
+- Each response uses a fresh tool configuration and the last six visible messages (up to 1,200 characters each). Old tool-call traces are not replayed, preventing prior tool choices from contaminating later requests.
 - Context overflow is surfaced as an error; automatic summarization and trimming are not implemented.
-- Web search needs your own key or a search MCP server. No live Brave request was tested without a key. Search-response decoding is covered by tests.
+- Web search needs your own key or a search MCP server. Search-response decoding and the search-routing workflow are covered by tests. The live model routing test uses fixed search results, not a paid API request.
 - Connection attempts time out. Stop cancels generation and disconnects an active MCP client to release pending calls.
 
 ## Dependencies
@@ -56,3 +57,9 @@ MCP Swift SDK and its transitive dependencies are managed by Swift Package Manag
 ## Verification
 
 Tested locally on an Apple silicon Mac running macOS 27.0.1. The live model invoked the calculator and produced 3973 for 137 × 29. A GUI MCP session discovered the bundled demo tool, showed the approval sheet, and returned 943 for 23 × 41. One initial GUI connection timed out; retry succeeded. HTTP transport is implemented using the official SDK but has not been verified against an external server.
+
+### 0.1.1
+
+Fixed calculator routing on web-search requests, capped model-driven tool calls, persisted search settings, normalized search queries and retries, and explicitly applied the custom Dock icon at launch. Startup Keychain reads run off the UI thread. Twelve tests pass, including the exact RuneScape search wording and a live model consuming controlled search results.
+
+The rebuilt app launches successfully. The final live Brave request was not verified because access to the saved Keychain credential remained pending. The packaged icon and runtime icon assignment are present; the Dock appearance has not been independently visually confirmed.

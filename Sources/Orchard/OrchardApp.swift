@@ -11,6 +11,11 @@ import SwiftUI
         .tint(Cyber.cyan)
         .onAppear {
           NSApp.setActivationPolicy(.regular)
+          if let url = Bundle.main.url(forResource: "Orchard", withExtension: "icns"),
+            let icon = NSImage(contentsOf: url)
+          {
+            NSApp.applicationIconImage = icon
+          }
           NSApp.activate(ignoringOtherApps: true)
         }
     }.defaultSize(width: 1180, height: 800).windowStyle(.hiddenTitleBar)
@@ -68,7 +73,7 @@ struct ChatView: View {
         } label: {
           Label("Settings", systemImage: "slider.horizontal.3")
         }.disabled(model.busy).buttonStyle(.glass).foregroundStyle(.white)
-        Text("ORCHARD / 0.1\nON-DEVICE INTELLIGENCE").font(
+        Text("ORCHARD / 0.1.1\nON-DEVICE INTELLIGENCE").font(
           .system(size: 10, weight: .medium, design: .monospaced)
         ).foregroundStyle(Cyber.secondary)
       }.padding(22).padding(.top, 14).frame(width: 216).frame(maxHeight: .infinity).cyberGlass(
